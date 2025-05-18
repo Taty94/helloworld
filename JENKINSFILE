@@ -1,7 +1,8 @@
 pipeline {
-    agent any
+    agent none
     stages {
         stage ('Get Code') {
+            agent {label 'windows-agent'}
             steps {
                 // Get the code from GitHub
                 echo 'Cloning the repo ...'
@@ -11,45 +12,74 @@ pipeline {
                 bat 'dir'
                 // Show the WORKSPACE
                 echo "The Workspace is: ${env.WORKSPACE}"
+                //Show the WORSPACE, CURRENT USER AND HOSTNAME
+                printAgentInfo()
+                stash name:'code', includes:'**'
+                // Clean the workspace
+                echo 'Cleaning workspace...'
+                deleteDir()
             }
         }
 
         stage ('Build') {
+            agent {label 'windows-agent'}
             steps {
                 echo "Build Stage: doesn't do anything!"
+                //Show the WORSPACE, CURRENT USER AND HOSTNAME
+                printAgentInfo()
             }
         }
         
         stage ('Parallel Tests') {
             parallel {
                 stage ('Unit') {
+                    agent {label 'unit-agent'}
                     steps {
                         catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                            echo 'Running Unit Tests'
-                            bat '''
-                                set PYTHONPATH=.
-                                pytest --junitxml=result-unit.xml test\\unit
+                            //Get the stahed code
+                            unstash 'code'
+                            sh '''
+                                ls -la
+                                export PYTHONPATH=.
+                                pytest --junitxml=result-unit.xml test/unit/
                             '''
+                            //Show the WORSPACE, CURRENT USER AND HOSTNAME
+                            printAgentInfo()
+                            //Save the download code like stash
+                            stash name:'unit', includes:'result-unit.xml'
                         }
                     }
                 }
-
                 stage ('Service') {
+                    agent {label 'rest-agent'}
                     steps {
                         catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                            echo 'Starting Flask and Wiremock servers'
-                            bat '''
+                            unstash 'code'
+                            //Starting flask server
+                            sh '''
                                 echo 'Starting Flask server ...'
-                                set FLASK_APP=app\\api.py
-                                start flask run
-                                echo 'Starting WireMock server ...'
-                                start java -jar C:\\TATIANA\\UNIR\\Modulo2\\CP1-A\\helloworld\\test\\wiremock\\wiremock-standalone-4.0.0-beta.2.jar --port 9090 --root-dir test\\wiremock
-                                
-                                python C:\\TATIANA\\UNIR\\Modulo2\\CP1-A\\helloworld\\check_wiremock.py
+                                export FLASK_APP=app/api.py
+                                flask run --host=0.0.0.0 &
                             '''
-                            
-                            echo 'Running service tests ...'
-                            bat 'pytest --junitxml=result-rest.xml test\\rest'
+                            //Starting wiremock server
+                            sh '''
+                                echo 'Starting WireMock server ...'
+                                java -jar /wiremock-standalone.jar --port 9090 --root-dir test/wiremock &
+                            '''
+                            //Ensure servers al available
+                            sh 'python3 /home/jenkins/agent/check_servers.py'
+                            //Run Service Unit Test
+                            sh '''
+                                echo 'Running service tests ...'
+                                pytest --junitxml=result-rest.xml test/rest/
+                            '''
+                            //Show the WORSPACE, CURRENT USER AND HOSTNAME
+                            printAgentInfo()
+                            //Save the download code like stash
+                            stash name:'rest', includes:'result-rest.xml'
+                            // Clean the workspace
+                            echo 'Cleaning workspace...'
+                            deleteDir()
                         }
                     }
                 }
@@ -57,10 +87,62 @@ pipeline {
         }
         
         stage ('Publish') {
+            agent { label 'windows-agent'}
             steps {
-                echo 'Publishing test results in JUnit format'
-                junit 'result-*.xml'
+                script {
+                    try {
+                        unstash 'unit'
+                    } catch (Exception e) {
+                        echo 'No unit tests found in stash.'
+                    }
+        
+                    try {
+                        unstash 'rest'
+                    } catch (Exception e) {
+                        echo 'No rest tests found in stash.'
+                    }
+        
+                    echo 'Verifying files unstashed...'
+                    bat '''
+                        dir /S
+                    '''
+        
+                    // Mostrar la información del agente
+                    printAgentInfo()
+        
+                    echo 'Publishing test results in JUnit format'
+                    junit 'result-*.xml'
+        
+                    // Limpiar el espacio de trabajo
+                    echo 'Cleaning workspace...'
+                    deleteDir()
+                }
             }
         }
+        
     }
+}
+def printAgentInfo() {
+    def whoami
+    def hostname
+    def workspace = env.WORKSPACE
+
+    if (isUnix()) {
+        whoami = sh(script: 'whoami', returnStdout: true).trim()
+        hostname = sh(script: 'hostname', returnStdout: true).trim()
+    } else {
+        whoami = bat(script: 'whoami', returnStdout: true).trim()
+        hostname = bat(script: 'hostname', returnStdout: true).trim()
+    }
+
+    def box = """ 
+    +-----------------------------------+ 
+    |          Pipeline Info           | 
+    +-----------------------------------+ 
+    | User:      ${whoami}             | 
+    | Hostname:  ${hostname}           | 
+    | Workspace: ${workspace}          | 
+    +-----------------------------------+ 
+    """ 
+    echo box
 }
