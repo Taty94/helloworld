@@ -61,6 +61,18 @@ class TestCalculate(unittest.TestCase):
         self.assertEqual(0, self.calc.substract(0, 0))
         self.assertEqual(0, self.calc.substract(0, 0))
         self.assertRaises(TypeError, self.calc.substract, "0", 0)
-        
+
+        def test_operations_with_floats(self):
+        self.assertAlmostEqual(self.calc.add(1.5, 2.3), 3.8)
+        self.assertAlmostEqual(self.calc.divide(7.5, 2.5), 3.0)
+    
+    def test_divide_by_zero_raises(self):
+        with self.assertRaises(TypeError):
+            self.calc.divide(5, 0)
+    
+    def test_large_numbers(self):
+        big = 10**100
+        self.assertEqual(self.calc.add(big, big), big * 2)
+            
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
