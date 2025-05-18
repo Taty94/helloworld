@@ -1,0 +1,150 @@
+pipeline {
+    agent none
+    stages {
+        stage ('Get Code') {
+            agent {label 'windows-agent'}
+            steps {
+                // Get the code from GitHub
+                echo 'Cloning the repo ...'
+                git url: 'https://github.com/Taty94/helloworld.git'
+                // Show the downloaded files
+                echo 'Verifying that the code has been downloaded'
+                bat 'dir'
+                // Show the WORKSPACE
+                echo "The Workspace is: ${env.WORKSPACE}"
+                //Show the WORSPACE, CURRENT USER AND HOSTNAME
+                printAgentInfo()
+                stash name:'code', includes:'**'
+                // Clean the workspace
+                echo 'Cleaning workspace...'
+                deleteDir()
+            }
+        }
+
+        stage ('Build') {
+            agent {label 'windows-agent'}
+            steps {
+                echo "Build Stage: doesn't do anything!"
+                //Show the WORSPACE, CURRENT USER AND HOSTNAME
+                printAgentInfo()
+            }
+        }
+        
+        stage ('Parallel Tests') {
+            parallel {
+                stage ('Unit') {
+                    agent {label 'unit-agent'}
+                    steps {
+                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                            //Get the stahed code
+                            unstash 'code'
+                            sh '''
+                                ls -la
+                                export PYTHONPATH=.
+                                pytest --junitxml=result-unit.xml test/unit/
+                            '''
+                            //Show the WORSPACE, CURRENT USER AND HOSTNAME
+                            printAgentInfo()
+                            //Save the download code like stash
+                            stash name:'unit', includes:'result-unit.xml'
+                        }
+                    }
+                }
+                stage ('Service') {
+                    agent {label 'rest-agent'}
+                    steps {
+                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                            unstash 'code'
+                            //Starting flask server
+                            sh '''
+                                echo 'Starting Flask server ...'
+                                export FLASK_APP=app/api.py
+                                flask run --host=0.0.0.0 &
+                            '''
+                            //Wait for a seconds to ensure servers al available
+                            sleep 4
+                            //Starting wiremock server
+                            sh '''
+                                echo 'Starting WireMock server ...'
+                                java -jar /wiremock-standalone.jar --port 9090 --root-dir test/wiremock &
+                            '''
+                            //Wait for a seconds to ensure servers al available
+                            sleep 7
+                            //Run Service Unit Test
+                            sh '''
+                                echo 'Running service tests ...'
+                                pytest --junitxml=result-rest.xml test/rest/
+                            '''
+                            //Show the WORSPACE, CURRENT USER AND HOSTNAME
+                            printAgentInfo()
+                            //Save the download code like stash
+                            stash name:'rest', includes:'result-rest.xml'
+                            // Clean the workspace
+                            echo 'Cleaning workspace...'
+                            deleteDir()
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage ('Publish') {
+            agent { label 'windows-agent'}
+            steps {
+                script {
+                    try {
+                        unstash 'unit'
+                    } catch (Exception e) {
+                        echo 'No unit tests found in stash.'
+                    }
+        
+                    try {
+                        unstash 'rest'
+                    } catch (Exception e) {
+                        echo 'No rest tests found in stash.'
+                    }
+        
+                    echo 'Verifying files unstashed...'
+                    bat '''
+                        dir /S
+                    '''
+        
+                    // Mostrar la información del agente
+                    printAgentInfo()
+        
+                    echo 'Publishing test results in JUnit format'
+                    junit 'result-*.xml'
+        
+                    // Limpiar el espacio de trabajo
+                    echo 'Cleaning workspace...'
+                    deleteDir()
+                }
+            }
+        }
+        
+    }
+}
+def printAgentInfo() {
+    def whoami
+    def hostname
+    def workspace = env.WORKSPACE
+
+    if (isUnix()) {
+        whoami = sh(script: 'whoami', returnStdout: true).trim()
+        hostname = sh(script: 'hostname', returnStdout: true).trim()
+    } else {
+        whoami = bat(script: 'whoami', returnStdout: true).trim()
+        hostname = bat(script: 'hostname', returnStdout: true).trim()
+    }
+
+    def box = """ 
+    +-----------------------------------+ 
+    |          Pipeline Info           | 
+    +-----------------------------------+ 
+    | User:      ${whoami}             | 
+    | Hostname:  ${hostname}           | 
+    | Workspace: ${workspace}          | 
+    +-----------------------------------+ 
+    """ 
+    echo box
+}
