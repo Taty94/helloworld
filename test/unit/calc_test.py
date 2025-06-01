@@ -62,7 +62,7 @@ class TestCalculate(unittest.TestCase):
         self.assertEqual(0, self.calc.substract(0, 0))
         self.assertRaises(TypeError, self.calc.substract, "0", 0)
 
-        def test_operations_with_floats(self):
+    def test_operations_with_floats(self):
         self.assertAlmostEqual(self.calc.add(1.5, 2.3), 3.8)
         self.assertAlmostEqual(self.calc.divide(7.5, 2.5), 3.0)
     
