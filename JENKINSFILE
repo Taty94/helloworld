@@ -40,7 +40,7 @@ pipeline {
                                 start flask run
                                 start java -jar C:\\TATIANA\\UNIR\\Modulo2\\CP1-A\\helloworld\\test\\wiremock\\wiremock-standalone-4.0.0-beta.2.jar --port 9090 --root-dir test\\wiremock
                                 
-                                python C:\\TATIANA\\UNIR\\Modulo2\\CP1-A\\helloworld\\check_wiremock.py
+                                python C:\\TATIANA\\UNIR\\Modulo2\\CP1-A\\helloworld\\check_servers.py
                             
                                 pytest --junitxml=result-rest.xml test\\rest
                             '''
