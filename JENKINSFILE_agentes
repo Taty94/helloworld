@@ -1,127 +1,144 @@
 pipeline {
     agent none
+    options { skipDefaultCheckout() }
     stages {
         stage ('Get Code') {
             agent {label 'windows-agent'}
             steps {
-                // Get the code from GitHub
-                echo 'Cloning the repo ...'
-                git url: 'https://github.com/Taty94/helloworld.git'
-                // Show the downloaded files
-                echo 'Verifying that the code has been downloaded'
-                bat 'dir'
-                // Show the WORKSPACE
-                echo "The Workspace is: ${env.WORKSPACE}"
-                //Show the WORSPACE, CURRENT USER AND HOSTNAME
+                echo "=== Get Code ==="
                 printAgentInfo()
+                // Get the code from GitHub
+                git branch: 'master', url: 'https://github.com/Taty94/helloworld.git'
+                bat 'dir'
+                echo WORKSPACE
                 stash name:'code', includes:'**'
-                // Clean the workspace
-                echo 'Cleaning workspace...'
-                deleteDir()
             }
         }
 
-        stage ('Build') {
-            agent {label 'windows-agent'}
-            steps {
-                echo "Build Stage: doesn't do anything!"
-                //Show the WORSPACE, CURRENT USER AND HOSTNAME
-                printAgentInfo()
-            }
-        }
-        
-        stage ('Parallel Tests') {
+        stage ('Tests') {
             parallel {
-                stage ('Unit') {
-                    agent {label 'unit-agent'}
+                stage ('Unit & Coverage Analisys') {
+                    agent {label 'python-tester'}
                     steps {
                         catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                            //Get the stahed code
                             unstash 'code'
+                            echo "===Unit & Coverage Analisys ==="
+                            printAgentInfo()
                             sh '''
                                 ls -la
                                 export PYTHONPATH=.
-                                pytest --junitxml=result-unit.xml test/unit/
+                                coverage run --branch --source=app --omit=app/__init__.py,app/api.py -m pytest --junitxml=result-unit.xml test/unit/
+                                coverage xml
                             '''
-                            //Show the WORSPACE, CURRENT USER AND HOSTNAME
-                            printAgentInfo()
-                            //Save the download code like stash
+                            junit 'result-unit.xml'
+                            
+                            cobertura coberturaReportFile: 'coverage.xml',
+                                lineCoverageTargets: '95,85,0',
+                                conditionalCoverageTargets: '90,80,0',
+                                onlyStable: false
                             stash name:'unit', includes:'result-unit.xml'
                         }
                     }
+                    post {
+                        always {
+                            cleanWs()
+                        }
+                    }
                 }
-                stage ('Service') {
-                    agent {label 'rest-agent'}
+                
+                stage('Static') {
+                    agent { label 'python-tester' }
+                    steps {
+                        unstash 'code'
+                        echo "=== Static ==="
+                        printAgentInfo()
+                        sh '''
+                            flake8 --format=pylint --exit-zero app >flake8.out
+                        '''
+                        recordIssues tools: [flake8(name: 'Flake8', pattern: 'flake8.out')],
+                            qualityGates: [
+                                [threshold: 8, type: 'TOTAL', unstable: true],
+                                [threshold: 10, type: 'TOTAL', unstable: false]
+                            ]
+                    }
+                    post {
+                        always {
+                            cleanWs()
+                        }
+                    }
+                }
+                
+                stage('Security') {
+                    agent { label 'python-tester' }
+                    steps {
+                        unstash 'code'
+                        echo "=== Security ==="
+                        printAgentInfo()
+                        sh 'bandit --exit-zero -r . -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"'
+                        recordIssues tools: [pyLint(name: 'Bandit', pattern: 'bandit.out')],
+                            qualityGates: [
+                                [threshold: 2, type: 'TOTAL', unstable:true],
+                                [threshold: 4, type: 'TOTAL', unstable:false]
+                            ]
+                    }
+                    post {
+                        always {
+                            cleanWs()
+                        }
+                    }
+                }
+                
+                stage ('Rest') {
+                    agent { label 'web-tester' } // Agente con Java (para Wiremock), Python, y acceso a red
                     steps {
                         catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                             unstash 'code'
-                            //Starting flask server
+                            echo "=== Rest ==="
+                            printAgentInfo()
                             sh '''
-                                echo 'Starting Flask server ...'
                                 export FLASK_APP=app/api.py
                                 flask run --host=0.0.0.0 &
-                            '''
-                            //Wait for a seconds to ensure servers al available
-                            sleep 4
-                            //Starting wiremock server
-                            sh '''
-                                echo 'Starting WireMock server ...'
+                                sleep 4
                                 java -jar /wiremock-standalone.jar --port 9090 --root-dir test/wiremock &
-                            '''
-                            //Wait for a seconds to ensure servers al available
-                            sleep 7
-                            //Run Service Unit Test
-                            sh '''
-                                echo 'Running service tests ...'
+                                sleep 7
                                 pytest --junitxml=result-rest.xml test/rest/
+                                
+                                lsof -t -i :5000 | xargs kill || true
+                                lsof -t -i :9090 | xargs kill || true
                             '''
-                            //Show the WORSPACE, CURRENT USER AND HOSTNAME
-                            printAgentInfo()
-                            //Save the download code like stash
-                            stash name:'rest', includes:'result-rest.xml'
-                            // Clean the workspace
-                            echo 'Cleaning workspace...'
-                            deleteDir()
+                            junit 'result-rest.xml'
+                        }
+                    }
+                    post {
+                        always {
+                            cleanWs()
                         }
                     }
                 }
             }
         }
         
-        stage ('Publish') {
-            agent { label 'windows-agent'}
+        stage('Performance') {
+            agent { label 'web-tester' }
             steps {
-                script {
-                    try {
-                        unstash 'unit'
-                    } catch (Exception e) {
-                        echo 'No unit tests found in stash.'
-                    }
-        
-                    try {
-                        unstash 'rest'
-                    } catch (Exception e) {
-                        echo 'No rest tests found in stash.'
-                    }
-        
-                    echo 'Verifying files unstashed...'
-                    bat '''
-                        dir /S
-                    '''
-        
-                    // Mostrar la información del agente
+                    unstash 'code'
+                    echo "=== Performance ==="
                     printAgentInfo()
-        
-                    echo 'Publishing test results in JUnit format'
-                    junit 'result-*.xml'
-        
-                    // Limpiar el espacio de trabajo
-                    echo 'Cleaning workspace...'
-                    deleteDir()
+                    sh '''
+                        export FLASK_APP=app/api.py
+                        flask run --host=0.0.0.0 &
+                        sleep 4
+                        /opt/jmeter/bin/jmeter.sh -n -t test/jmeter/flask.jmx -f -l flask.jtl
+                        lsof -t -i :5000 | xargs kill || true
+                    '''
+                    perfReport sourceDataFiles: 'flask.jtl'
+                }
+            post {
+                always {
+                    cleanWs()
                 }
             }
         }
-        
     }
 }
 def printAgentInfo() {
