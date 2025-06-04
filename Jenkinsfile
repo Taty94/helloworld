@@ -122,6 +122,7 @@ pipeline {
         stage('Performance') {
             agent { label 'web-tester' }
             steps {
+                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                     unstash 'code'
                     echo "=== Performance ==="
                     printAgentInfo()
@@ -134,6 +135,7 @@ pipeline {
                     '''
                     perfReport sourceDataFiles: 'flask.jtl'
                 }
+            }
             post {
                 always {
                     cleanWs()
