@@ -29,14 +29,43 @@ pipeline {
                                 export PYTHONPATH=.
                                 coverage run --branch --source=app --omit=app/__init__.py,app/api.py -m pytest --junitxml=result-unit.xml test/unit/
                                 coverage xml
+                                coverage report
                             '''
                             junit 'result-unit.xml'
                             
                             cobertura coberturaReportFile: 'coverage.xml',
-                                lineCoverageTargets: '95,85,0',
-                                conditionalCoverageTargets: '90,80,0',
+                                lineCoverageTargets: '95,0,85',
+                                conditionalCoverageTargets: '90,0,80',
                                 onlyStable: false
                             stash name:'unit', includes:'result-unit.xml'
+                        }
+                    }
+                    post {
+                        always {
+                            cleanWs()
+                        }
+                    }
+                }
+                
+                stage ('Rest') {
+                    agent { label 'web-tester' }
+                    steps {
+                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                            unstash 'code'
+                            echo "=== Rest ==="
+                            printAgentInfo()
+                            sh '''
+                                export FLASK_APP=app/api.py
+                                flask run --host=0.0.0.0 &
+                                sleep 4
+                                java -jar /wiremock-standalone.jar --port 9090 --root-dir test/wiremock &
+                                sleep 7
+                                pytest --junitxml=result-rest.xml test/rest/
+                                
+                                lsof -t -i :5000 | xargs kill || true
+                                lsof -t -i :9090 | xargs kill || true
+                            '''
+                            junit 'result-rest.xml'
                         }
                     }
                     post {
@@ -88,33 +117,8 @@ pipeline {
                     }
                 }
                 
-                stage ('Rest') {
-                    agent { label 'web-tester' } // Agente con Java (para Wiremock), Python, y acceso a red
-                    steps {
-                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                            unstash 'code'
-                            echo "=== Rest ==="
-                            printAgentInfo()
-                            sh '''
-                                export FLASK_APP=app/api.py
-                                flask run --host=0.0.0.0 &
-                                sleep 4
-                                java -jar /wiremock-standalone.jar --port 9090 --root-dir test/wiremock &
-                                sleep 7
-                                pytest --junitxml=result-rest.xml test/rest/
-                                
-                                lsof -t -i :5000 | xargs kill || true
-                                lsof -t -i :9090 | xargs kill || true
-                            '''
-                            junit 'result-rest.xml'
-                        }
-                    }
-                    post {
-                        always {
-                            cleanWs()
-                        }
-                    }
-                }
+                
+
             }
         }
         
