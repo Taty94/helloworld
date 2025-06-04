@@ -18,12 +18,13 @@ pipeline {
                         catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                             bat '''
                                 set PYTHONPATH=.
-                                coverage run --branch --source=app --omit=app\\__init__.py,app\\api.py -m pytest --junitxml=result-unit.xml test\\unit
+                                coverage run --branch --source=app --omit=app\\__init__.py,app\\api.py -m pytest --junitxml=result-unit.xml  test\\unit
                                 coverage xml
+                                coverage report
                             '''
                             cobertura coberturaReportFile: 'coverage.xml',
-                                lineCoverageTargets: '95,85,0',
-                                conditionalCoverageTargets: '90,80,0',
+                                lineCoverageTargets: '95,0,85', 
+                                conditionalCoverageTargets: '90,0,80',
                                 onlyStable: false,
                                 autoUpdateStability: true
                                 
@@ -79,12 +80,14 @@ pipeline {
 
         stage('Performance') {
             steps {
-                bat '''
-                    set FLASK_APP=app\\api.py
-                    start flask run
-                    C:\\TATIANA\\UNIR\\Modulo2\\CP1-A\\apache-jmeter-5.6.3\\bin\\jmeter.bat -n -t test\\jmeter\\flask.jmx -f -l flask.jtl
-                '''
-                perfReport sourceDataFiles: 'flask.jtl'
+                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                    bat '''
+                        set FLASK_APP=app\\api.py
+                        start flask run
+                        C:\\TATIANA\\UNIR\\Modulo2\\CP1-A\\apache-jmeter-5.6.3\\bin\\jmeter.bat -n -t test\\jmeter\\flask.jmx -f -l flask.jtl
+                    '''
+                    perfReport sourceDataFiles: 'flask.jtl'
+                }
             }
         }
     }
